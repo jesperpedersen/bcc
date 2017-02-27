@@ -26,7 +26,7 @@
 #include <clang/Rewrite/Core/Rewriter.h>
 
 #include "b_frontend_action.h"
-#include "shared_table.h"
+#include "table_storage.h"
 #include "common.h"
 
 #include "libbpf.h"
@@ -57,6 +57,7 @@ const char **calling_conv_regs = calling_conv_regs_x86;
 #endif
 
 using std::map;
+using std::move;
 using std::set;
 using std::string;
 using std::to_string;
@@ -273,8 +274,9 @@ DiagnosticBuilder ProbeVisitor::error(SourceLocation loc, const char (&fmt)[N]) 
 }
 
 
-BTypeVisitor::BTypeVisitor(ASTContext &C, Rewriter &rewriter, vector<TableDesc> &tables)
-    : C(C), diag_(C.getDiagnostics()), rewriter_(rewriter), out_(llvm::errs()), tables_(tables) {
+BTypeVisitor::BTypeVisitor(ASTContext &C, BFrontendAction &fe)
+    : C(C), diag_(C.getDiagnostics()), fe_(fe), rewriter_(fe.rewriter()),
+    out_(llvm::errs()) {
 }
 
 bool BTypeVisitor::VisitFunctionDecl(FunctionDecl *D) {
@@ -360,14 +362,16 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
                                                    Call->getArg(Call->getNumArgs() - 1)->getLocEnd())));
 
         // find the table fd, which was opened at declaration time
-        auto table_it = tables_.begin();
-        for (; table_it != tables_.end(); ++table_it)
-          if (table_it->name == Ref->getDecl()->getName()) break;
-        if (table_it == tables_.end()) {
-          error(Ref->getLocEnd(), "bpf_table %0 failed to open") << Ref->getDecl()->getName();
-          return false;
+        TableStorage::iterator desc;
+        Path local_path({fe_.id(), Ref->getDecl()->getName()});
+        Path global_path({Ref->getDecl()->getName()});
+        if (!fe_.table_storage().Find(local_path, desc)) {
+          if (!fe_.table_storage().Find(global_path, desc)) {
+            error(Ref->getLocEnd(), "bpf_table %0 failed to open") << Ref->getDecl()->getName();
+            return false;
+          }
         }
-        string fd = to_string(table_it->fd);
+        string fd = to_string(desc->second.fd);
         string prefix, suffix;
         string map_update_policy = "BPF_ANY";
         string txt;
@@ -393,7 +397,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
           string lookup = "bpf_map_lookup_elem_(bpf_pseudo_fd(1, " + fd + ")";
           string update = "bpf_map_update_elem_(bpf_pseudo_fd(1, " + fd + ")";
           txt  = "({ typeof(" + name + ".key) _key = " + arg0 + "; ";
-          if (table_it->type == BPF_MAP_TYPE_HASH) {
+          if (desc->second.type == BPF_MAP_TYPE_HASH) {
             txt += "typeof(" + name + ".leaf) _zleaf; memset(&_zleaf, 0, sizeof(_zleaf)); ";
             txt += update + ", &_key, &_zleaf, BPF_NOEXIST); ";
           }
@@ -418,7 +422,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
             meta + ", " +
             meta_len + ");";
         } else if (memb_name == "get_stackid") {
-            if (table_it->type == BPF_MAP_TYPE_STACK_TRACE) {
+            if (desc->second.type == BPF_MAP_TYPE_STACK_TRACE) {
               string arg0 = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
               txt = "bpf_get_stackid(";
               txt += "bpf_pseudo_fd(1, " + fd + "), " + arg0;
@@ -657,8 +661,11 @@ bool BTypeVisitor::VisitVarDecl(VarDecl *Decl) {
     }
     const RecordDecl *RD = R->getDecl()->getDefinition();
 
-    TableDesc table = {};
+    TableDesc table;
+    TableStorage::iterator table_it;
     table.name = Decl->getName();
+    Path local_path({fe_.id(), table.name});
+    Path global_path({table.name});
 
     unsigned i = 0;
     for (auto F : RD->fields()) {
@@ -729,24 +736,22 @@ bool BTypeVisitor::VisitVarDecl(VarDecl *Decl) {
     } else if (A->getName() == "maps/stacktrace") {
       map_type = BPF_MAP_TYPE_STACK_TRACE;
     } else if (A->getName() == "maps/extern") {
-      table.is_extern = true;
-      table.fd = SharedTables::instance()->lookup_fd(table.name);
-      table.type = SharedTables::instance()->lookup_type(table.name);
-    } else if (A->getName() == "maps/export") {
-      if (table.name.substr(0, 2) == "__")
-        table.name = table.name.substr(2);
-      auto table_it = tables_.begin();
-      for (; table_it != tables_.end(); ++table_it)
-        if (table_it->name == table.name) break;
-      if (table_it == tables_.end()) {
+      if (!fe_.table_storage().Find(global_path, table_it)) {
         error(Decl->getLocStart(), "reference to undefined table");
         return false;
       }
-      if (!SharedTables::instance()->insert_fd(table.name, table_it->fd, table_it->type)) {
-        error(Decl->getLocStart(), "could not export bpf map %0: %1") << table.name << "already in use";
+      table = table_it->second.dup();
+      table.is_extern = true;
+    } else if (A->getName() == "maps/export") {
+      if (table.name.substr(0, 2) == "__")
+        table.name = table.name.substr(2);
+      Path local_path({fe_.id(), table.name});
+      Path global_path({table.name});
+      if (!fe_.table_storage().Find(local_path, table_it)) {
+        error(Decl->getLocStart(), "reference to undefined table");
         return false;
       }
-      table_it->is_shared = true;
+      fe_.table_storage().Insert(global_path, table_it->second.dup());
       return true;
     }
 
@@ -765,7 +770,7 @@ bool BTypeVisitor::VisitVarDecl(VarDecl *Decl) {
       return false;
     }
 
-    tables_.push_back(std::move(table));
+    fe_.table_storage().Insert(local_path, move(table));
   } else if (const PointerType *P = Decl->getType()->getAs<PointerType>()) {
     // if var is a pointer to a packet type, clone the annotation into the var
     // decl so that the packet dext/dins rewriter can catch it
@@ -782,8 +787,8 @@ bool BTypeVisitor::VisitVarDecl(VarDecl *Decl) {
   return true;
 }
 
-BTypeConsumer::BTypeConsumer(ASTContext &C, Rewriter &rewriter, vector<TableDesc> &tables)
-    : visitor_(C, rewriter, tables) {
+BTypeConsumer::BTypeConsumer(ASTContext &C, BFrontendAction &fe)
+    : visitor_(C, fe) {
 }
 
 bool BTypeConsumer::HandleTopLevelDecl(DeclGroupRef Group) {
@@ -810,8 +815,9 @@ bool ProbeConsumer::HandleTopLevelDecl(DeclGroupRef Group) {
   return true;
 }
 
-BFrontendAction::BFrontendAction(llvm::raw_ostream &os, unsigned flags)
-    : os_(os), flags_(flags), rewriter_(new Rewriter), tables_(new vector<TableDesc>) {
+BFrontendAction::BFrontendAction(llvm::raw_ostream &os, unsigned flags,
+                                 TableStorage &ts, const std::string &id)
+    : os_(os), flags_(flags), ts_(ts), id_(id), rewriter_(new Rewriter) {
 }
 
 void BFrontendAction::EndSourceFileAction() {
@@ -825,7 +831,7 @@ unique_ptr<ASTConsumer> BFrontendAction::CreateASTConsumer(CompilerInstance &Com
   rewriter_->setSourceMgr(Compiler.getSourceManager(), Compiler.getLangOpts());
   vector<unique_ptr<ASTConsumer>> consumers;
   consumers.push_back(unique_ptr<ASTConsumer>(new ProbeConsumer(Compiler.getASTContext(), *rewriter_)));
-  consumers.push_back(unique_ptr<ASTConsumer>(new BTypeConsumer(Compiler.getASTContext(), *rewriter_, *tables_)));
+  consumers.push_back(unique_ptr<ASTConsumer>(new BTypeConsumer(Compiler.getASTContext(), *this)));
   return unique_ptr<ASTConsumer>(new MultiplexConsumer(move(consumers)));
 }
 

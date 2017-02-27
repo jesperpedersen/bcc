@@ -17,7 +17,9 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <unistd.h>
 
 namespace llvm {
 class Function;
@@ -25,10 +27,60 @@ class Function;
 
 namespace ebpf {
 
-struct TableDesc {
+class TableDesc;
+
+/// FileDesc is a helper class for managing open file descriptors. Copy is
+/// disallowed (call dup instead), and cleanup happens automatically.
+class FileDesc {
+  friend TableDesc;
+ private:
+  FileDesc & operator=(const FileDesc& that) {
+    fd = ::dup(that.fd);
+    return *this;
+  }
+  FileDesc(const FileDesc& that) { *this = that; }
+ public:
+  FileDesc(int fd = -1) : fd(fd) {}
+  FileDesc & operator=(FileDesc &&that) {
+    fd = that.fd;
+    that.fd = -1;
+    return *this;
+  }
+  FileDesc(FileDesc &&that) { *this = std::move(that); }
+  ~FileDesc() {
+    if (fd >= 0)
+      ::close(fd);
+  }
+  FileDesc dup() const {
+    return FileDesc(*this);
+  }
+
+  operator int() { return fd; }
+  operator int() const { return fd; }
+ private:
+  int fd = -1;
+};
+
+/// TableDesc uniquely stores all of the runtime state for an active bpf table.
+/// The copy constructor/assign operator are disabled since the file handles
+/// owned by this table are not implicitly copyable. One should call the dup()
+/// method if an explicit new handle is required. We define the move operators
+/// so that objects of this class can reside in stl containers.
+class TableDesc {
+ private:
+  TableDesc(const TableDesc &) = default;
+  TableDesc & operator=(const TableDesc &) = default;
+ public:
+  TableDesc() = default;
+  TableDesc(TableDesc&& that) = default;
+  TableDesc & operator=(TableDesc&& that) = default;
+  TableDesc dup() const {
+    return TableDesc(*this);
+  }
+
   std::string name;
-  int fd;
-  int type;
+  FileDesc fd;
+  int type = {};
   size_t key_size;  // sizes are in bytes
   size_t leaf_size;
   size_t max_entries;
@@ -39,8 +91,8 @@ struct TableDesc {
   llvm::Function *leaf_sscanf;
   llvm::Function *key_snprintf;
   llvm::Function *leaf_snprintf;
-  bool is_shared;
-  bool is_extern;
+  bool is_shared = false;
+  bool is_extern = false;
 };
 
 }  // namespace ebpf

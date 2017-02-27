@@ -24,7 +24,7 @@
 #include <clang/Frontend/FrontendAction.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 
-#include "table_desc.h"
+#include "table_storage.h"
 
 #define DEBUG_PREPROCESSOR 0x4
 
@@ -40,6 +40,8 @@ class StringRef;
 }
 
 namespace ebpf {
+
+class BFrontendAction;
 
 // Helper visitor for constructing a string representation of a key/leaf decl
 class BMapDeclVisitor : public clang::RecursiveASTVisitor<BMapDeclVisitor> {
@@ -63,8 +65,7 @@ class BMapDeclVisitor : public clang::RecursiveASTVisitor<BMapDeclVisitor> {
 // and store the open handles in a map of table-to-fd's.
 class BTypeVisitor : public clang::RecursiveASTVisitor<BTypeVisitor> {
  public:
-  explicit BTypeVisitor(clang::ASTContext &C, clang::Rewriter &rewriter,
-                        std::vector<TableDesc> &tables);
+  explicit BTypeVisitor(clang::ASTContext &C, BFrontendAction &fe);
   bool TraverseCallExpr(clang::CallExpr *Call);
   bool VisitFunctionDecl(clang::FunctionDecl *D);
   bool VisitCallExpr(clang::CallExpr *Call);
@@ -82,9 +83,9 @@ class BTypeVisitor : public clang::RecursiveASTVisitor<BTypeVisitor> {
 
   clang::ASTContext &C;
   clang::DiagnosticsEngine &diag_;
+  BFrontendAction &fe_;
   clang::Rewriter &rewriter_;  /// modifications to the source go into this class
   llvm::raw_ostream &out_;  /// for debugging
-  std::vector<TableDesc> &tables_;  /// store the open FDs
   std::vector<clang::ParmVarDecl *> fn_args_;
   std::set<clang::Expr *> visited_;
   std::string current_fn_;
@@ -115,8 +116,7 @@ class ProbeVisitor : public clang::RecursiveASTVisitor<ProbeVisitor> {
 // A helper class to the frontend action, walks the decls
 class BTypeConsumer : public clang::ASTConsumer {
  public:
-  explicit BTypeConsumer(clang::ASTContext &C, clang::Rewriter &rewriter,
-                         std::vector<TableDesc> &tables);
+  explicit BTypeConsumer(clang::ASTContext &C, BFrontendAction &fe);
   bool HandleTopLevelDecl(clang::DeclGroupRef Group) override;
  private:
   BTypeVisitor visitor_;
@@ -138,7 +138,7 @@ class BFrontendAction : public clang::ASTFrontendAction {
  public:
   // Initialize with the output stream where the new source file contents
   // should be written.
-  BFrontendAction(llvm::raw_ostream &os, unsigned flags);
+  BFrontendAction(llvm::raw_ostream &os, unsigned flags, TableStorage &ts, const std::string &id);
 
   // Called by clang when the AST has been completed, here the output stream
   // will be flushed.
@@ -147,13 +147,15 @@ class BFrontendAction : public clang::ASTFrontendAction {
   std::unique_ptr<clang::ASTConsumer>
       CreateASTConsumer(clang::CompilerInstance &Compiler, llvm::StringRef InFile) override;
 
-  // take ownership of the table-to-fd mapping data structure
-  std::unique_ptr<std::vector<TableDesc>> take_tables() { return move(tables_); }
+  clang::Rewriter & rewriter() const { return *rewriter_; }
+  TableStorage & table_storage() const { return ts_; }
+  std::string id() const { return id_; }
  private:
   llvm::raw_ostream &os_;
   unsigned flags_;
+  TableStorage &ts_;
+  std::string id_;
   std::unique_ptr<clang::Rewriter> rewriter_;
-  std::unique_ptr<std::vector<TableDesc>> tables_;
 };
 
 }  // namespace visitor

@@ -32,6 +32,7 @@
 #include "perf_reader.h"
 #include "common.h"
 #include "usdt.h"
+#include "table_storage.h"
 
 #include "BPF.h"
 
