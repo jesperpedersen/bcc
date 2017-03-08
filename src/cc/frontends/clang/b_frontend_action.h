@@ -43,22 +43,6 @@ namespace ebpf {
 
 class BFrontendAction;
 
-// Helper visitor for constructing a string representation of a key/leaf decl
-class BMapDeclVisitor : public clang::RecursiveASTVisitor<BMapDeclVisitor> {
- public:
-  explicit BMapDeclVisitor(clang::ASTContext &C, std::string &result);
-  bool TraverseRecordDecl(clang::RecordDecl *Decl);
-  bool VisitRecordDecl(clang::RecordDecl *Decl);
-  bool VisitFieldDecl(clang::FieldDecl *Decl);
-  bool VisitBuiltinType(const clang::BuiltinType *T);
-  bool VisitTypedefType(const clang::TypedefType *T);
-  bool VisitTagType(const clang::TagType *T);
-  bool VisitPointerType(const clang::PointerType *T);
- private:
-  clang::ASTContext &C;
-  std::string &result_;
-};
-
 // Type visitor and rewriter for B programs.
 // It will look for B-specific features and rewrite them into a valid
 // C program. As part of the processing, open the necessary BPF tables

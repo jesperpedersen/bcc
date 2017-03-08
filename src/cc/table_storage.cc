@@ -16,6 +16,8 @@
 
 #include <unistd.h>
 
+#include <clang/AST/Type.h>
+
 #include "table_storage_impl.h"
 
 namespace ebpf {
@@ -50,6 +52,16 @@ size_t TableStorage::DeletePrefix(const Path &path) {
     ++i;
   }
   return i;
+}
+
+void TableStorage::AddMapTypesVisitor(unique_ptr<MapTypesVisitor> visitor) {
+  visitors_.push_back(move(visitor));
+}
+void TableStorage::VisitMapType(TableDesc &desc, clang::ASTContext &C,
+                                clang::QualType key_type, clang::QualType
+                                leaf_type) {
+  for (auto &v : visitors_)
+    v->Visit(desc, C, key_type, leaf_type);
 }
 
 TableStorage::iterator TableStorage::begin() {

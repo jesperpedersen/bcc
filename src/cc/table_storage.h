@@ -21,6 +21,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "table_desc.h"
 
@@ -50,6 +51,8 @@ class Path {
 
 class TableStorage {
  public:
+  /// iterator is an abstract class for traversing the map entries in a table
+  /// storage object.
   class iterator {
    private:
     friend class TableStorage;
@@ -76,19 +79,26 @@ class TableStorage {
    private:
     std::unique_ptr<TableStorageIteratorImpl> impl_;
   };
+
   TableStorage();
   ~TableStorage();
   void Init(std::unique_ptr<TableStorageImpl>);
+
   bool Find(const Path &path, TableStorage::iterator &result) const;
   bool Insert(const Path &path, TableDesc &&desc);
   bool Delete(const Path &path);
   size_t DeletePrefix(const Path &path);
+
+  void AddMapTypesVisitor(std::unique_ptr<MapTypesVisitor>);
+  void VisitMapType(TableDesc &desc, clang::ASTContext &C, clang::QualType
+                    key_type, clang::QualType leaf_type);
   iterator begin();
   iterator end();
   iterator lower_bound(const Path &p);
   iterator upper_bound(const Path &p);
  private:
   std::unique_ptr<TableStorageImpl> impl_;
+  std::vector<std::unique_ptr<MapTypesVisitor>> visitors_;
 };
 
 std::unique_ptr<TableStorage> createSharedTableStorage();

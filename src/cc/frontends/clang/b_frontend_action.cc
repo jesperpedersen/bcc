@@ -65,69 +65,6 @@ using std::unique_ptr;
 using std::vector;
 using namespace clang;
 
-// Encode the struct layout as a json description
-BMapDeclVisitor::BMapDeclVisitor(ASTContext &C, string &result)
-    : C(C), result_(result) {}
-bool BMapDeclVisitor::VisitFieldDecl(FieldDecl *D) {
-  result_ += "\"";
-  result_ += D->getName();
-  result_ += "\",";
-  return true;
-}
-
-bool BMapDeclVisitor::TraverseRecordDecl(RecordDecl *D) {
-  // skip children, handled in Visit...
-  if (!WalkUpFromRecordDecl(D))
-    return false;
-  return true;
-}
-bool BMapDeclVisitor::VisitRecordDecl(RecordDecl *D) {
-  result_ += "[\"";
-  result_ += D->getName();
-  result_ += "\", [";
-  for (auto F : D->getDefinition()->fields()) {
-    if (F->isAnonymousStructOrUnion()) {
-      if (const RecordType *R = dyn_cast<RecordType>(F->getType()))
-        TraverseDecl(R->getDecl());
-      result_ += ", ";
-      continue;
-    }
-    result_ += "[";
-    TraverseDecl(F);
-    if (const ConstantArrayType *T = dyn_cast<ConstantArrayType>(F->getType()))
-      result_ += ", [" + T->getSize().toString(10, false) + "]";
-    if (F->isBitField())
-      result_ += ", " + to_string(F->getBitWidthValue(C));
-    result_ += "], ";
-  }
-  if (!D->getDefinition()->field_empty())
-    result_.erase(result_.end() - 2);
-  result_ += "]";
-  if (D->isUnion())
-    result_ += ", \"union\"";
-  else if (D->isStruct())
-    result_ += ", \"struct\"";
-  result_ += "]";
-  return true;
-}
-// pointer to anything should be treated as terminal, don't recurse further
-bool BMapDeclVisitor::VisitPointerType(const PointerType *T) {
-  result_ += "\"unsigned long long\"";
-  return false;
-}
-bool BMapDeclVisitor::VisitTagType(const TagType *T) {
-  return TraverseDecl(T->getDecl()->getDefinition());
-}
-bool BMapDeclVisitor::VisitTypedefType(const TypedefType *T) {
-  return TraverseDecl(T->getDecl());
-}
-bool BMapDeclVisitor::VisitBuiltinType(const BuiltinType *T) {
-  result_ += "\"";
-  result_ += T->getName(C.getPrintingPolicy());
-  result_ += "\"";
-  return true;
-}
-
 class ProbeChecker : public RecursiveASTVisitor<ProbeChecker> {
  public:
   explicit ProbeChecker(Expr *arg, const set<Decl *> &ptregs)
@@ -666,6 +603,7 @@ bool BTypeVisitor::VisitVarDecl(VarDecl *Decl) {
     table.name = Decl->getName();
     Path local_path({fe_.id(), table.name});
     Path global_path({table.name});
+    QualType key_type, leaf_type;
 
     unsigned i = 0;
     for (auto F : RD->fields()) {
@@ -676,16 +614,14 @@ bool BTypeVisitor::VisitVarDecl(VarDecl *Decl) {
           return false;
         }
         table.key_size = sz;
-        BMapDeclVisitor visitor(C, table.key_desc);
-        visitor.TraverseType(F->getType());
+        key_type = F->getType();
       } else if (F->getName() == "leaf") {
         if (sz == 0) {
           error(F->getLocStart(), "invalid zero-sized leaf");
           return false;
         }
         table.leaf_size = sz;
-        BMapDeclVisitor visitor(C, table.leaf_desc);
-        visitor.TraverseType(F->getType());
+        leaf_type = F->getType();
       } else if (F->getName() == "data") {
         table.max_entries = sz / table.leaf_size;
       } else if (F->getName() == "flags") {
@@ -770,6 +706,7 @@ bool BTypeVisitor::VisitVarDecl(VarDecl *Decl) {
       return false;
     }
 
+    fe_.table_storage().VisitMapType(table, C, key_type, leaf_type);
     fe_.table_storage().Insert(local_path, move(table));
   } else if (const PointerType *P = Decl->getType()->getAs<PointerType>()) {
     // if var is a pointer to a packet type, clone the annotation into the var

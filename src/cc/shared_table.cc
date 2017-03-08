@@ -103,6 +103,7 @@ std::map<string, TableDesc> SharedTableStorage::tables_;
 unique_ptr<TableStorage> createSharedTableStorage() {
   auto t = make_unique<TableStorage>();
   t->Init(make_unique<SharedTableStorage>());
+  t->AddMapTypesVisitor(createJsonMapTypesVisitor());
   return t;
 }
 

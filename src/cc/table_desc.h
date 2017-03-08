@@ -25,6 +25,11 @@ namespace llvm {
 class Function;
 }
 
+namespace clang {
+class ASTContext;
+class QualType;
+}
+
 namespace ebpf {
 
 class TableDesc;
@@ -94,5 +99,18 @@ class TableDesc {
   bool is_shared = false;
   bool is_extern = false;
 };
+
+/// MapTypesVisitor gets notified of new bpf tables, and has a chance to parse
+/// the key and leaf types for their own usage. Subclass this abstract class and
+/// implement the Visit method, then add an instance of this class to the
+/// StorageTable instance to be notified of each new key/leaf type.
+class MapTypesVisitor {
+ public:
+  virtual ~MapTypesVisitor() {}
+  virtual void Visit(TableDesc &desc, clang::ASTContext &C, clang::QualType
+                     key_type, clang::QualType leaf_type) = 0;
+};
+
+std::unique_ptr<MapTypesVisitor> createJsonMapTypesVisitor();
 
 }  // namespace ebpf
