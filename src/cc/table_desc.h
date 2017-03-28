@@ -86,16 +86,16 @@ class TableDesc {
   std::string name;
   FileDesc fd;
   int type = {};
-  size_t key_size;  // sizes are in bytes
-  size_t leaf_size;
-  size_t max_entries;
-  int flags;
+  size_t key_size = 0;  // sizes are in bytes
+  size_t leaf_size = 0;
+  size_t max_entries = 0;
+  int flags = 0;
   std::string key_desc;
   std::string leaf_desc;
-  llvm::Function *key_sscanf;
-  llvm::Function *leaf_sscanf;
-  llvm::Function *key_snprintf;
-  llvm::Function *leaf_snprintf;
+  llvm::Function *key_sscanf = nullptr;
+  llvm::Function *leaf_sscanf = nullptr;
+  llvm::Function *key_snprintf = nullptr;
+  llvm::Function *leaf_snprintf = nullptr;
   bool is_shared = false;
   bool is_extern = false;
 };
