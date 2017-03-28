@@ -652,13 +652,11 @@ bool BTypeVisitor::VisitVarDecl(VarDecl *Decl) {
     } else if (A->getName() == "maps/lpm_trie") {
       map_type = BPF_MAP_TYPE_LPM_TRIE;
     } else if (A->getName() == "maps/histogram") {
-      if (table.key_desc == "\"int\"")
+      map_type = BPF_MAP_TYPE_HASH;
+      if (key_type->isSpecificBuiltinType(BuiltinType::Int))
         map_type = BPF_MAP_TYPE_ARRAY;
-      else
-        map_type = BPF_MAP_TYPE_HASH;
-      if (table.leaf_desc != "\"unsigned long long\"") {
-        error(Decl->getLocStart(), "histogram leaf type must be u64, got %0") << table.leaf_desc;
-      }
+      if (!leaf_type->isSpecificBuiltinType(BuiltinType::ULongLong))
+        error(Decl->getLocStart(), "histogram leaf type must be u64, got %0") << leaf_type;
     } else if (A->getName() == "maps/prog") {
       map_type = BPF_MAP_TYPE_PROG_ARRAY;
     } else if (A->getName() == "maps/perf_output") {

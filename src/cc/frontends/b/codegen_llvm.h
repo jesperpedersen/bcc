@@ -64,7 +64,7 @@ class CodegenLLVM : public Visitor {
   EXPAND_NODES(VISIT)
 #undef VISIT
 
-  STATUS_RETURN visit(Node* n, TableStorage &ts);
+  STATUS_RETURN visit(Node* n, TableStorage &ts, const std::string &id);
 
   int get_table_fd(const std::string &name) const;
 

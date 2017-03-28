@@ -716,7 +716,8 @@ int BPFModule::load_b(const string &filename, const string &proto_filename) {
     return rc;
 
   b_loader_.reset(new BLoader(flags_));
-  if (int rc = b_loader_->parse(&*mod_, filename, proto_filename, *ts_))
+  if (int rc = b_loader_->parse(&*mod_, filename, proto_filename, *ts_,
+                                std::to_string((uintptr_t)this)))
     return rc;
   if (int rc = annotate())
     return rc;

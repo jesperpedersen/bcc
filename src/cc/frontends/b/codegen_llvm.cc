@@ -1220,7 +1220,7 @@ StatusTuple CodegenLLVM::visit_func_decl_stmt_node(FuncDeclStmtNode *n) {
   return StatusTuple(0);
 }
 
-StatusTuple CodegenLLVM::visit(Node* root, TableStorage &ts) {
+StatusTuple CodegenLLVM::visit(Node* root, TableStorage &ts, const string &id) {
   scopes_->set_current(scopes_->top_state());
   scopes_->set_current(scopes_->top_var());
 
@@ -1239,7 +1239,7 @@ StatusTuple CodegenLLVM::visit(Node* root, TableStorage &ts) {
       map_type = BPF_MAP_TYPE_HASH;
     else if (table.first->type_id()->name_ == "INDEXED")
       map_type = BPF_MAP_TYPE_ARRAY;
-    ts.Insert(Path({table.first->id_->name_}), {
+    ts.Insert(Path({id, table.first->id_->name_}), {
       table.first->id_->name_,
       table_fds_[table.first],
       map_type,
